@@ -1,0 +1,5 @@
+Pillow==10.0.0
+numpy==1.26.0
+PyPDF2==3.0.1
+PyQt6
+pytesseract==0.3.10
