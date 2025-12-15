@@ -5,126 +5,32 @@ import os
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFileDialog, QMessageBox, QProgressBar
+    QLabel, QPushButton, QFileDialog, QMessageBox, QProgressBar, QCheckBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QIcon
 from style import LightBlueStyle  # 导入样式类
+from splitter import get_splitter  # 导入分割器模块
 
-# A4尺寸（300dpi）
+# A4尺寸（300dpi）- 仅用于 PDF 生成
 A4_WIDTH = 2480
 A4_HEIGHT = 3508
 
-def find_text_by_color(image):
-    """通过颜色识别文字区域"""
-    # 转换图片为RGB模式
-    img_rgb = image.convert('RGB')
-    img_array = np.array(img_rgb)
+def split_image(image_path, output_dir, has_table=False):
+    """分割图片
     
-    # 获取背景色（使用图片边缘的颜色中值）
-    background_color = np.median(img_array[0:20], axis=0)  # 使用前20行的中值颜色
-    
-    # 创建掩码来标记文字区域
-    text_mask = np.zeros((img_array.shape[0],), dtype=bool)
-    
-    # 对每一行进行分析
-    for y in range(img_array.shape[0]):
-        row = img_array[y]
-        
-        # 检查每个像素是否是文字
-        # 1. 黑色文字 (RGB接近0,0,0)
-        black_text = np.all(row < [50, 50, 50], axis=1)
-        
-        # 2. 红色文字 (R明显大于G和B)
-        red_text = (row[:, 0] > 150) & (row[:, 1] < 50) & (row[:, 2] < 50)
-        
-        # 3. 与背景色的差异
-        color_diff = np.abs(row - background_color)
-        diff_text = np.any(color_diff > 30, axis=1)
-        
-        # 如果这一行包含任何文字像素
-        if np.any(black_text | red_text | diff_text):
-            text_mask[y] = True
-    
-    return text_mask
-
-def calculate_target_height(image_width):
-    """根据图片宽度计算目标高度（A4比例）"""
-    return int(image_width / (A4_WIDTH / A4_HEIGHT))
-
-def find_split_points(image):
-    """找到合适的分割点"""
-    width, height = image.size
-    
-    # 计算目标页面高度（基于A4比例）
-    target_height = calculate_target_height(width)
-    
-    # 获取文字区域掩码
-    text_mask = find_text_by_color(image)
-    
-    # 计算需要分割的页数
-    page_count = max(1, int(np.ceil(height / target_height)))
-    
-    # 寻找分割点
-    split_points = []
-    for i in range(page_count):
-        if i == page_count - 1:
-            # 最后一页
-            split_points.append(height)
-            break
-            
-        # 计算理想分割位置
-        ideal_split = (i + 1) * target_height
-        
-        # 在理想位置上下100像素范围内寻找最佳空白区域
-        search_start = max(0, ideal_split - 100)
-        search_end = min(height, ideal_split + 100)
-        
-        # 在搜索范围内寻找最佳分割点
-        best_split = None
-        max_blank_height = 0
-        
-        for y in range(search_start, search_end):
-            # 检查当前位置是否是空白
-            if not text_mask[y]:
-                # 向上寻找连续空白区域的开始
-                blank_start = y
-                while blank_start > search_start and not text_mask[blank_start - 1]:
-                    blank_start -= 1
-                
-                # 向下寻找连续空白区域的结束
-                blank_end = y
-                while blank_end < search_end - 1 and not text_mask[blank_end + 1]:
-                    blank_end += 1
-                
-                blank_height = blank_end - blank_start
-                
-                # 计算与理想分割点的距离
-                distance_to_ideal = abs(y - ideal_split)
-                
-                # 如果这是最大的空白区域，或者空白区域足够大且更接近理想分割点
-                if (blank_height > max_blank_height or 
-                    (blank_height >= 20 and distance_to_ideal < abs(best_split - ideal_split if best_split else float('inf')))):
-                    max_blank_height = blank_height
-                    best_split = y
-                
-                # 跳过已经检查过的空白区域
-                y = blank_end
-        
-        if best_split is not None:
-            split_points.append(best_split)
-        else:
-            # 如果找不到合适的空白区域，就在理想位置分割
-            split_points.append(ideal_split)
-    
-    return split_points
-
-def split_image(image_path, output_dir):
-    """分割图片"""
+    Args:
+        image_path: 图片路径
+        output_dir: 输出目录
+        has_table: 是否包含表格（使用表格感知分割）
+    """
     img = Image.open(image_path)
     
+    # 根据是否有表格选择分割器
+    splitter = get_splitter(has_table=has_table)
+    
     # 找到分割点
-    split_points = find_split_points(img)
+    split_points = splitter.find_split_points(img)
     
     # 分割并保存图片
     images = []
@@ -163,10 +69,11 @@ class ConversionThread(QThread):
     error = pyqtSignal(str)     # 错误信号
     current_file = pyqtSignal(str)  # 当前正在处理的文件名
     
-    def __init__(self, input_images, output_path):
+    def __init__(self, input_images, output_path, has_table=False):
         super().__init__()
         self.input_images = input_images
         self.output_path = output_path
+        self.has_table = has_table  # 是否包含表格
         self._is_running = True
         
     def run(self):
@@ -197,7 +104,7 @@ class ConversionThread(QThread):
                 self.progress.emit(base_progress)
                 
                 # 分割图片
-                image_paths = split_image(image_path, output_dir)
+                image_paths = split_image(image_path, output_dir, self.has_table)
                 
                 if not self._is_running:
                     return
@@ -243,7 +150,7 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(icon_path))
         
         self.setWindowTitle('图片转PDF工具')
-        self.setFixedSize(500, 350)  # 增加窗口高度
+        self.setFixedSize(500, 380)  # 增加窗口高度以容纳勾选框
         
         # 应用淡蓝色主题
         self.setStyleSheet(LightBlueStyle.get_main_window_style())
@@ -289,6 +196,31 @@ class MainWindow(QMainWindow):
         self.select_output_btn.clicked.connect(self.select_output_path)
         output_layout.addWidget(self.select_output_btn)
         layout.addWidget(output_widget)
+        
+        # 表格选项勾选框
+        self.table_checkbox = QCheckBox('内有表格（避免在表格中间分割）', self)
+        self.table_checkbox.setStyleSheet(f'''
+            QCheckBox {{
+                color: {LightBlueStyle.COLORS['text']};
+                font-size: 13px;
+                padding: 5px 0;
+            }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+            }}
+            QCheckBox::indicator:unchecked {{
+                border: 2px solid {LightBlueStyle.COLORS['border']};
+                border-radius: 4px;
+                background-color: {LightBlueStyle.COLORS['white']};
+            }}
+            QCheckBox::indicator:checked {{
+                border: 2px solid {LightBlueStyle.COLORS['primary']};
+                border-radius: 4px;
+                background-color: {LightBlueStyle.COLORS['primary']};
+            }}
+        ''')
+        layout.addWidget(self.table_checkbox)
         
         # 进度条
         self.progress_bar = QProgressBar(self)
@@ -400,7 +332,8 @@ class MainWindow(QMainWindow):
         # 创建后台线程
         self.conversion_thread = ConversionThread(
             self.input_images, 
-            self.output_path
+            self.output_path,
+            has_table=self.table_checkbox.isChecked()  # 传递勾选框状态
         )
         self.conversion_thread.progress.connect(self.update_progress)
         self.conversion_thread.finished.connect(self.conversion_finished)
