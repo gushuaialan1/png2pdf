@@ -1,5 +1,11 @@
 # 图片转PDF工具
 
+[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)](#系统要求)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](#系统要求)
+[![License](https://img.shields.io/badge/license-MIT-green)](#许可证)
+[![Release](https://img.shields.io/github/v/release/gushuaialan1/png2pdf)](https://github.com/gushuaialan1/png2pdf/releases)
+[![Last Commit](https://img.shields.io/github/last-commit/gushuaialan1/png2pdf)](https://github.com/gushuaialan1/png2pdf/commits/main)
+
 一个简单易用的图片转PDF工具，专门针对带有拼音的教材或文档进行智能分割和转换。
 
 ## 更新日志
